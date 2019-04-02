@@ -1,0 +1,53 @@
+name:                paxos
+version:             0.1.0.0
+github:              "rgrover/paxos"
+license:             BSD3
+author:              "Rohit Grover"
+maintainer:          "rohit@mailbox.org"
+copyright:           "BSD"
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/rgrover/paxos#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- distributed-process
+- network-transport-tcp
+- binary
+- lens
+- transformers
+
+library:
+  source-dirs: src
+
+executables:
+  paxos-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - paxos
+
+tests:
+  paxos-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - paxos
