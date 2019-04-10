@@ -25,7 +25,7 @@ dependencies:
 - network-transport-tcp
 - binary
 - lens
-- transformers
+- mtl
 
 library:
   source-dirs: src

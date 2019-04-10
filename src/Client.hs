@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TemplateHaskell       #-}
 module Client where
 
 import           Common
@@ -24,18 +25,19 @@ import           Data.Binary                      (Binary)
 import           Data.Typeable                    (Typeable)
 import           GHC.Generics                     (Generic)
 
-import           Control.Monad.Trans.RWS.Lazy     (RWS, execRWS, get,
+import           Control.Lens                     (makeLenses, (+=))
+import           Control.Monad.RWS.Lazy           (RWS, execRWS, get,
                                                    modify, put, tell)
 import           Data.Foldable                    (for_)
 import           Data.Traversable                 (for)
 
 data ClientState
-  = ClientState
-      { command :: String -- assumption: client repeats command
-      , ticket  :: Ticket
-      , pending :: Maybe ClientRequest
+  = Round1
+      { _newTicket  :: Ticket
+      , _round1Acks :: Int
       }
       deriving (Show)
+makeLenses ''ClientState
 
 data ClientMessage
   = ClientMessage ProcessId ClientRequest
@@ -49,3 +51,33 @@ instance Message ClientMessage ClientRequest where
 
 type ClientAction
   = RWS [ProcessId] [ClientMessage] ClientState
+
+runClient :: [ProcessId] -> ClientState -> Process ()
+runClient serverPids = go
+  where
+    go s = do
+      (s', _msgs) <- receiveWait [match $ run handleServerResponse]
+      say $ show s'
+      go s'
+      where
+        run
+          :: (ServerResponse -> ClientAction ())
+          -> ServerResponse
+          -> Process (ClientState, [ClientMessage])
+        run handler msg =
+          return $ execRWS (handler msg) serverPids s
+
+        handleServerResponse
+          :: ServerResponse
+          -> ClientAction ()
+        handleServerResponse (HaveTicket t) =
+          -- "main received: have-ticket: " ++ show t
+          return ()
+        handleServerResponse (AllocatedTicket t) = do
+          round1Acks += 1
+          --say $ "main received: allocated-ticket: " ++ show t
+          return ()
+        handleServerResponse (HaveProposal _) =
+          -- "main received: have-proposal"
+          return ()
+

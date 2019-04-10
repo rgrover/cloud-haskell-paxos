@@ -25,7 +25,7 @@ import           Data.Binary                      (Binary)
 import           Data.Typeable                    (Typeable)
 import           GHC.Generics                     (Generic)
 
-import           Control.Monad.Trans.RWS.Lazy     (RWS, execRWS, get,
+import           Control.Monad.RWS.Lazy           (execRWS, get,
                                                    modify, put, tell)
 import           Data.Foldable                    (for_)
 import           Data.Traversable                 (for)
@@ -49,24 +49,9 @@ main = do
       send pid (self, NewTicket $ Ticket 1)
 
     let
-      --run handler msg =
-        --return $ execRWS (handler msg) () s
-      logServerResponse :: ServerResponse -> Process ()
-      logServerResponse (HaveTicket t) =
-        say $ "main received: have-ticket: " ++ show t
-      logServerResponse (AllocatedTicket t) =
-        say $ "main received: allocated-ticket: " ++ show t
-      logServerResponse (HaveProposal _) =
-        say "main received: have-proposal"
-    forever $
-      receiveWait [match logServerResponse]
+      initialClientState =
+        Round1
+          (Ticket 1) -- proposal
+          0 -- acks
 
-{-
- -data ClientState
- -  = ClientState
- -      { command :: String -- assumption: client repeats command
- -      , ticket  :: Ticket
- -      , pending :: Maybe ClientRequest
- -      }
- -      deriving (Show)
- -}
+    runClient serverPids initialClientState

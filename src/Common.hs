@@ -22,7 +22,7 @@ import           Data.Binary                      (Binary)
 import           Data.Typeable                    (Typeable)
 import           GHC.Generics                     (Generic)
 
-import           Control.Monad.Trans.RWS.Lazy     (RWS, execRWS, get,
+import           Control.Monad.RWS.Lazy           (RWS, execRWS, get,
                                                    modify, put, tell)
 import           Data.Foldable                    (for_)
 import           Data.Traversable                 (for)
