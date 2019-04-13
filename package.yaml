@@ -29,6 +29,8 @@ dependencies:
 
 library:
   source-dirs: src
+  ghc-options:
+  - -fwarn-unused-imports
 
 executables:
   paxos-exe:

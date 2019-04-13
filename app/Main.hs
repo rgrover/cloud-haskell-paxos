@@ -16,6 +16,7 @@ import           Control.Distributed.Process      (Process, ProcessId, ProcessMo
                                                    monitor,
                                                    receiveWait, say,
                                                    send, spawnLocal)
+
 import           Control.Distributed.Process.Node
 import           Control.Monad                    (forever, void)
 import           Control.Monad.IO.Class           (liftIO)
@@ -42,16 +43,18 @@ main = do
   node <- newLocalNode t initRemoteTable
   void $ runProcess node $ do
     self       <- getSelfPid
+
+    -- start servers
     serverPids <- for [1..3] $ const $ spawnLocal server
-
     for_ serverPids monitor
-    for_ serverPids $ \pid ->
-      send pid (self, NewTicket $ Ticket 1)
 
+    -- start client
+    clientPid <- spawnLocal (client serverPids)
+    void $ monitor clientPid
+
+    -- reap monitor notifications
     let
-      initialClientState =
-        Round1
-          (Ticket 1) -- proposal
-          0 -- acks
-
-    runClient serverPids initialClientState
+      handler :: ProcessMonitorNotification -> Process ()
+      handler n = say $ "received monitor notification: " ++ show n
+    forever $
+      receiveWait [match handler]

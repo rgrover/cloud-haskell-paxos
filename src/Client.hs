@@ -5,34 +5,31 @@
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TemplateHaskell       #-}
+{-# OPTIONS_GHC -fwarn-unused-imports #-}
 module Client where
 
 import           Common
 
-import           Control.Concurrent               (threadDelay)
-import           Control.Distributed.Process      (Process, ProcessId, ProcessMonitorNotification,
-                                                   die, expect,
-                                                   getSelfPid, match,
-                                                   monitor,
-                                                   receiveWait, say,
-                                                   send, spawnLocal)
-import           Control.Distributed.Process.Node
-import           Control.Monad                    (forever, void)
-import           Control.Monad.IO.Class           (liftIO)
-import           Network.Transport.TCP            (createTransport, defaultTCPParameters)
+import           Control.Concurrent          (threadDelay)
+import           Control.Distributed.Process (Process, ProcessId,
+                                              getSelfPid, match,
+                                              receiveWait, say, send,
+                                              spawnLocal)
+import           Control.Monad.IO.Class      (liftIO)
 
-import           Data.Binary                      (Binary)
-import           Data.Typeable                    (Typeable)
-import           GHC.Generics                     (Generic)
+import           Data.Binary                 (Binary)
+import           Data.Typeable               (Typeable, typeOf)
+import           GHC.Generics                (Generic)
 
-import           Control.Lens                     (makeLenses, (+=))
-import           Control.Monad.RWS.Lazy           (RWS, execRWS, get,
-                                                   modify, put, tell)
-import           Data.Foldable                    (for_)
-import           Data.Traversable                 (for)
+import           Control.Lens                (makeLenses, (+=))
+import           Control.Monad               (forever)
+import           Control.Monad.RWS.Lazy      (RWS, execRWS)
 
 data ClientState
-  = Round1
+  = Idle
+      { _furthestKnownTicket :: Ticket
+      }
+  | Round1
       { _newTicket  :: Ticket
       , _round1Acks :: Int
       }
@@ -44,40 +41,64 @@ data ClientMessage
     deriving (Show, Generic, Typeable)
 
 instance Message ClientMessage ClientRequest where
-  recipientOf :: ClientMessage -> ProcessId
   recipientOf (ClientMessage p _) = p
-  msg :: ClientMessage -> ClientRequest
-  msg (ClientMessage _ r) = r
+  contentOf (ClientMessage _ r) = r
 
 type ClientAction
   = RWS [ProcessId] [ClientMessage] ClientState
 
-runClient :: [ProcessId] -> ClientState -> Process ()
-runClient serverPids = go
+data Tick = Tick
+  deriving (Generic, Typeable)
+
+instance Binary Tick
+
+client :: [ProcessId] -> Process ()
+client serverPids = do
+  getSelfPid >>= spawnLocal . ticker
+  go initialClientState
   where
+    initialClientState =
+      Idle { _furthestKnownTicket = Ticket 1 }
+    ticker :: ProcessId -> Process ()
+    ticker destinationPid =
+      forever $ do
+        liftIO $ threadDelay (10^6)
+        send destinationPid Tick
+    go :: ClientState -> Process ()
     go s = do
-      (s', _msgs) <- receiveWait [match $ run handleServerResponse]
+      (s', msgs) <-
+        receiveWait
+          [ match $ run handleServerResponse
+          , match $ run handleTick
+          ]
       say $ show s'
+      sendMessages msgs
       go s'
       where
         run
-          :: (ServerResponse -> ClientAction ())
-          -> ServerResponse
+          :: Typeable a
+          => (a -> ClientAction ())
+          -> a
           -> Process (ClientState, [ClientMessage])
-        run handler msg =
+        run handler msg = do
+          say $ "handling msg type " ++ show (typeOf msg)
           return $ execRWS (handler msg) serverPids s
 
-        handleServerResponse
-          :: ServerResponse
-          -> ClientAction ()
-        handleServerResponse (HaveTicket t) =
-          -- "main received: have-ticket: " ++ show t
-          return ()
-        handleServerResponse (AllocatedTicket t) = do
-          round1Acks += 1
-          --say $ "main received: allocated-ticket: " ++ show t
-          return ()
-        handleServerResponse (HaveProposal _) =
-          -- "main received: have-proposal"
-          return ()
-
+handleServerResponse
+  :: ServerResponse
+  -> ClientAction ()
+handleServerResponse (HaveTicket t) =
+  -- "main received: have-ticket: " ++ show t
+  return ()
+handleServerResponse (AllocatedTicket t) = do
+  round1Acks += 1
+  --say $ "main received: allocated-ticket: " ++ show t
+  return ()
+handleServerResponse (HaveProposal _) =
+  -- "main received: have-proposal"
+  return ()
+handleTick :: Tick -> ClientAction ()
+handleTick = const $
+  --for_ serverPids $ \pid ->
+    --send pid (self, NewTicket $ Ticket 1)
+  return ()

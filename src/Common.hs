@@ -4,28 +4,17 @@
 {-# LANGUAGE MultiParamTypeClasses  #-}
 {-# LANGUAGE NamedFieldPuns         #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
+{-# OPTIONS_GHC -fwarn-unused-imports #-}
 module Common where
 
-import           Control.Concurrent               (threadDelay)
-import           Control.Distributed.Process      (Process, ProcessId, ProcessMonitorNotification,
-                                                   die, expect,
-                                                   getSelfPid, match,
-                                                   monitor,
-                                                   receiveWait, say,
-                                                   send, spawnLocal)
-import           Control.Distributed.Process.Node
-import           Control.Monad                    (forever, void)
-import           Control.Monad.IO.Class           (liftIO)
-import           Network.Transport.TCP            (createTransport, defaultTCPParameters)
+import           Control.Distributed.Process (Process, ProcessId,
+                                              send)
 
-import           Data.Binary                      (Binary)
-import           Data.Typeable                    (Typeable)
-import           GHC.Generics                     (Generic)
+import           Data.Binary                 (Binary)
+import           Data.Typeable               (Typeable)
+import           GHC.Generics                (Generic)
 
-import           Control.Monad.RWS.Lazy           (RWS, execRWS, get,
-                                                   modify, put, tell)
-import           Data.Foldable                    (for_)
-import           Data.Traversable                 (for)
+import           Data.Foldable               (traverse_)
 
 newtype Ticket
   = Ticket Int
@@ -39,9 +28,13 @@ type Command
 type Proposal
   = (Ticket, Command)
 
-class Message m c | m -> c where
+class (Binary c, Typeable c) => Message m c | m -> c where
   recipientOf :: m -> ProcessId
-  msg :: m -> c
+  contentOf   :: m -> c
+
+sendMessages :: Message m c => [m] -> Process ()
+sendMessages =
+  traverse_ $ \m -> send (recipientOf m) (contentOf m)
 
 data ClientRequest
   = NewTicket Ticket

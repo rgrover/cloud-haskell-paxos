@@ -4,30 +4,19 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# OPTIONS_GHC -fwarn-unused-imports #-}
 module Server where
 
 import           Common
 
-import           Control.Concurrent               (threadDelay)
-import           Control.Distributed.Process      (Process, ProcessId, ProcessMonitorNotification,
-                                                   die, expect,
-                                                   getSelfPid, match,
-                                                   monitor,
-                                                   receiveWait, say,
-                                                   send, spawnLocal)
-import           Control.Distributed.Process.Node
-import           Control.Monad                    (forever, void)
-import           Control.Monad.IO.Class           (liftIO)
-import           Network.Transport.TCP            (createTransport, defaultTCPParameters)
+import           Control.Distributed.Process (Process, ProcessId,
+                                              match, receiveWait, say)
 
-import           Data.Binary                      (Binary)
-import           Data.Typeable                    (Typeable)
-import           GHC.Generics                     (Generic)
+import           Data.Typeable               (Typeable)
+import           GHC.Generics                (Generic)
 
-import           Control.Monad.RWS.Lazy           (RWS, execRWS, get,
-                                                   modify, put, tell)
-import           Data.Foldable                    (for_)
-import           Data.Traversable                 (for)
+import           Control.Monad.RWS.Lazy      (RWS, execRWS, get, put,
+                                              tell)
 
 data ServerState
   = ServerState
@@ -42,10 +31,8 @@ data ServerMessage
     deriving (Show, Generic, Typeable)
 
 instance Message ServerMessage ServerResponse where
-  recipientOf :: ServerMessage -> ProcessId
   recipientOf (ServerMessage p _) = p
-  msg :: ServerMessage -> ServerResponse
-  msg (ServerMessage _ r) = r
+  contentOf (ServerMessage _ r) = r
 
 type ServerAction
   = RWS () [ServerMessage] ServerState
@@ -77,5 +64,5 @@ server =
       (s', msgs) <-
         receiveWait [ match $ run handleClientRequest ]
       say $ "state: " ++ show s'
-      for_ msgs $ \m -> send (recipientOf m) $ msg m
+      sendMessages msgs
       go s'
