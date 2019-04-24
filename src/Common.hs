@@ -39,7 +39,7 @@ sendMessages ms = do
   for_ ms $ \m -> send (recipientOf m) (selfPid, contentOf m)
 
 data ClientRequest
-  = NewTicket Ticket
+  = AskForTicket Ticket
   | Propose Proposal
   | Execute
   deriving (Show, Typeable, Generic)

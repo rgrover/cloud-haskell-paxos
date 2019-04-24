@@ -49,7 +49,7 @@ server =
         handleClientRequest
           :: (ProcessId, ClientRequest)
           -> ServerAction ()
-        handleClientRequest (requestor, NewTicket t) = do
+        handleClientRequest (requestor, AskForTicket t) = do
           newestTicket <- use largestIssuedTicket
           if newestTicket >= t
             then

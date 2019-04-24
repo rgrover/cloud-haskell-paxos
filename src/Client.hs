@@ -136,4 +136,4 @@ client serverPids = do
               numAcks =
                 0
             put $ Round1 $ Round1State newTicket numAcks
-            tell $ flip ClientMessage (NewTicket newTicket) <$> serverPids
+            tell $ flip ClientMessage (AskForTicket newTicket) <$> serverPids
