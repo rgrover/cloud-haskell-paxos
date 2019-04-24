@@ -19,12 +19,11 @@ import           Control.Monad.IO.Class      (liftIO)
 
 import           Data.Binary                 (Binary)
 import           Data.Foldable               (for_)
-import           Data.Typeable               (Typeable)
+import           Data.Typeable               (Typeable, typeOf)
 import           GHC.Generics                (Generic)
 
 import           Control.Lens                (makeLenses, (&), (+~),
-                                              (^.), (^?))
-import           Control.Lens.Extras         (is)
+                                              (.~), (^.), (^?))
 import           Control.Lens.TH             (makePrisms)
 import           Control.Monad               (forever, when)
 import           Control.Monad.RWS.Lazy      (RWS, execRWS, get, put,
@@ -39,8 +38,8 @@ makeLenses ''IdleState
 
 data Round1State
   = Round1State
-      { _ticketToTry :: Ticket
-      , _numOKs      :: Int
+      { _ticketBeingAsked :: Ticket
+      , _numOKs           :: Int
       }
     deriving (Show)
 makeLenses ''Round1State
@@ -108,10 +107,20 @@ client serverPids = do
         handleServerResponse
           :: (ProcessId, ServerResponse)
           -> ClientAction ()
-        handleServerResponse (sPid, HaveNewerTicket t) = do
+        handleServerResponse (sPid, HaveTicket newerT) = do
           s <- get
-          when (is _Round1 s) $
-            put $ Idle $ IdleState t
+          for_ (s ^? _Round1) $ \round1S ->
+            when (newerT >= round1S ^. ticketBeingAsked) $ do
+              let
+                newerT' = newerT + 1
+                round1S' :: Round1State
+                round1S' =
+                  round1S &
+                    (ticketBeingAsked .~ newerT') .
+                    (numOKs .~ 0)
+              put $ Round1 round1S'
+              tell $ flip ClientMessage (AskForTicket newerT') <$> serverPids
+
         handleServerResponse (sPid, Round1OK ticket mProposal) = do
           s <- get
           for_ (s ^? _Round1) $ \round1S -> do

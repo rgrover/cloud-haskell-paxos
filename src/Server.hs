@@ -49,16 +49,14 @@ server =
         handleClientRequest
           :: (ProcessId, ClientRequest)
           -> ServerAction ()
-        handleClientRequest (requestor, AskForTicket t) = do
+        handleClientRequest (requestor, AskForTicket reqTicket) = do
           newestTicket <- use largestIssuedTicket
-          if newestTicket >= t
+          if newestTicket >= reqTicket
             then
-              tell [ ServerMessage requestor $
-                      HaveNewerTicket newestTicket
-                   ]
+              tell [ ServerMessage requestor $ HaveTicket newestTicket ]
             else do
-              largestIssuedTicket .= t
-              tell [ServerMessage requestor $ Round1OK t Nothing]
+              largestIssuedTicket .= reqTicket
+              tell [ServerMessage requestor $ Round1OK reqTicket Nothing]
 
         run handler msg =
           return $ execRWS (handler msg) () s

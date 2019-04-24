@@ -48,7 +48,7 @@ instance Binary ClientRequest
 
 data ServerResponse
   = Round1OK Ticket (Maybe Proposal)
-  | HaveNewerTicket Ticket
+  | HaveTicket Ticket
   deriving (Show, Typeable, Generic)
 
 instance Binary ServerResponse
