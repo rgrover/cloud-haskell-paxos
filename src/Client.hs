@@ -92,6 +92,7 @@ client serverPids = do
           , match $ run handleTick
           ]
       say $ "client state: " ++ show s'
+      --say $ "client msgs to send: " ++ show msgs
       sendMessages msgs
       go s'
       where
@@ -121,15 +122,16 @@ client serverPids = do
               put $ Round1 round1S'
               tell $ flip ClientMessage (AskForTicket newerT') <$> serverPids
 
-        handleServerResponse (sPid, Round1OK ticket mProposal) = do
+        handleServerResponse (sPid, Round1OK ticketGranted mProposal) = do
           s <- get
-          for_ (s ^? _Round1) $ \round1S -> do
-            let
-              round1S' =
-                round1S & numOKs +~ 1
-            if haveRound1Majority round1S'
-              then put $ Round2 Round2State
-              else put $ Round1 round1S'
+          for_ (s ^? _Round1) $ \round1S ->
+            when (round1S ^. ticketBeingAsked == ticketGranted) $ do
+              let
+                round1S' =
+                  round1S & numOKs +~ 1
+              if haveRound1Majority round1S'
+                then put $ Round2 Round2State
+                else put $ Round1 round1S'
 
         haveRound1Majority :: Round1State -> Bool
         haveRound1Majority s =
