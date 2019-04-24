@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TemplateHaskell       #-}
 {-# OPTIONS_GHC -fwarn-unused-imports #-}
 module Server where
 
@@ -15,16 +16,17 @@ import           Control.Distributed.Process (Process, ProcessId,
 import           Data.Typeable               (Typeable)
 import           GHC.Generics                (Generic)
 
-import           Control.Monad.RWS.Lazy      (RWS, execRWS, get, put,
-                                              tell)
+import           Control.Lens                (makeLenses, use, (.=))
+import           Control.Monad.RWS.Lazy      (RWS, execRWS, tell)
 
 data ServerState
   = ServerState
-      { maxTicket :: Ticket
-      , proposal  :: Maybe Proposal
-      , executed  :: [String]
+      { _largestIssuedTicket :: Ticket
+      , _proposal            :: Maybe Proposal
+      , _executed            :: [String]
       }
       deriving (Show)
+makeLenses ''ServerState
 
 data ServerMessage
   = ServerMessage ProcessId ServerResponse
@@ -48,21 +50,23 @@ server =
           :: (ProcessId, ClientRequest)
           -> ServerAction ()
         handleClientRequest (requestor, NewTicket t) = do
-          s <- get
-          let
-            ownTicket =
-              maxTicket s
-          if ownTicket >= t
+          newestTicket <- use largestIssuedTicket
+          if newestTicket >= t
             then
-              tell [ServerMessage requestor $ HaveTicket ownTicket]
+              tell [ ServerMessage requestor $
+                      HaveNewerTicket newestTicket
+                   ]
             else do
-              put $ s {maxTicket = t}
-              tell [ServerMessage requestor $ AllocatedTicket t]
+              largestIssuedTicket .= t
+              tell [ServerMessage requestor $ Round1OK t Nothing]
+
         run handler msg =
           return $ execRWS (handler msg) () s
 
       (s', msgs) <-
         receiveWait [ match $ run handleClientRequest ]
-      say $ "state: " ++ show s'
+      say $ "server state: " ++ show s'
+      --say $ "server msgs to send: " ++ show msgs
+
       sendMessages msgs
       go s'

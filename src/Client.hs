@@ -18,23 +18,44 @@ import           Control.Distributed.Process (Process, ProcessId,
 import           Control.Monad.IO.Class      (liftIO)
 
 import           Data.Binary                 (Binary)
-import           Data.Typeable               (Typeable, typeOf)
+import           Data.Foldable               (for_)
+import           Data.Typeable               (Typeable)
 import           GHC.Generics                (Generic)
 
-import           Control.Lens                (makeLenses, (+=))
-import           Control.Monad               (forever)
-import           Control.Monad.RWS.Lazy      (RWS, execRWS)
+import           Control.Lens                (makeLenses, (&), (+~),
+                                              (^.), (^?))
+import           Control.Lens.Extras         (is)
+import           Control.Lens.TH             (makePrisms)
+import           Control.Monad               (forever, when)
+import           Control.Monad.RWS.Lazy      (RWS, execRWS, get, put,
+                                              tell)
 
-data ClientState
-  = Idle
+newtype IdleState
+  = IdleState
       { _furthestKnownTicket :: Ticket
       }
-  | Round1
-      { _newTicket  :: Ticket
-      , _round1Acks :: Int
+    deriving (Show)
+makeLenses ''IdleState
+
+data Round1State
+  = Round1State
+      { _ticketToTry :: Ticket
+      , _numOKs      :: Int
       }
-      deriving (Show)
-makeLenses ''ClientState
+    deriving (Show)
+makeLenses ''Round1State
+
+data Round2State
+  = Round2State
+  deriving (Show)
+makeLenses ''Round2State
+
+data ClientState
+  = Idle IdleState
+  | Round1 Round1State
+  | Round2 Round2State
+  deriving (Show)
+makePrisms ''ClientState
 
 data ClientMessage
   = ClientMessage ProcessId ClientRequest
@@ -58,12 +79,12 @@ client serverPids = do
   go initialClientState
   where
     initialClientState =
-      Idle { _furthestKnownTicket = Ticket 1 }
+      Idle $ IdleState { _furthestKnownTicket = Ticket 0 }
     ticker :: ProcessId -> Process ()
-    ticker destinationPid =
+    ticker invokerPid =
       forever $ do
         liftIO $ threadDelay (10^6)
-        send destinationPid Tick
+        send invokerPid Tick
     go :: ClientState -> Process ()
     go s = do
       (s', msgs) <-
@@ -71,7 +92,7 @@ client serverPids = do
           [ match $ run handleServerResponse
           , match $ run handleTick
           ]
-      say $ show s'
+      say $ "client state: " ++ show s'
       sendMessages msgs
       go s'
       where
@@ -80,25 +101,39 @@ client serverPids = do
           => (a -> ClientAction ())
           -> a
           -> Process (ClientState, [ClientMessage])
-        run handler msg = do
-          say $ "handling msg type " ++ show (typeOf msg)
+        run handler msg =
+          --say $ "handling msg type " ++ show (typeOf msg)
           return $ execRWS (handler msg) serverPids s
 
-handleServerResponse
-  :: ServerResponse
-  -> ClientAction ()
-handleServerResponse (HaveTicket t) =
-  -- "main received: have-ticket: " ++ show t
-  return ()
-handleServerResponse (AllocatedTicket t) = do
-  round1Acks += 1
-  --say $ "main received: allocated-ticket: " ++ show t
-  return ()
-handleServerResponse (HaveProposal _) =
-  -- "main received: have-proposal"
-  return ()
-handleTick :: Tick -> ClientAction ()
-handleTick = const $
-  --for_ serverPids $ \pid ->
-    --send pid (self, NewTicket $ Ticket 1)
-  return ()
+        handleServerResponse
+          :: (ProcessId, ServerResponse)
+          -> ClientAction ()
+        handleServerResponse (sPid, HaveNewerTicket t) = do
+          s <- get
+          when (is _Round1 s) $
+            put $ Idle $ IdleState t
+        handleServerResponse (sPid, Round1OK ticket mProposal) = do
+          s <- get
+          for_ (s ^? _Round1) $ \round1S -> do
+            let
+              round1S' =
+                round1S & numOKs +~ 1
+            if haveRound1Majority round1S'
+              then put $ Round2 Round2State
+              else put $ Round1 round1S'
+
+        haveRound1Majority :: Round1State -> Bool
+        haveRound1Majority s =
+          (s ^. numOKs) >= round (fromIntegral (length serverPids) / 2)
+
+        handleTick :: Tick -> ClientAction ()
+        handleTick _ = do
+          s <- get
+          for_ (s ^? _Idle) $ \idleS -> do
+            let
+              newTicket =
+                idleS ^. furthestKnownTicket + 1
+              numAcks =
+                0
+            put $ Round1 $ Round1State newTicket numAcks
+            tell $ flip ClientMessage (NewTicket newTicket) <$> serverPids

@@ -1,24 +1,25 @@
-{-# LANGUAGE DeriveGeneric          #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE InstanceSigs           #-}
-{-# LANGUAGE MultiParamTypeClasses  #-}
-{-# LANGUAGE NamedFieldPuns         #-}
-{-# LANGUAGE ScopedTypeVariables    #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE FunctionalDependencies     #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs               #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# OPTIONS_GHC -fwarn-unused-imports #-}
 module Common where
 
 import           Control.Distributed.Process (Process, ProcessId,
-                                              send)
+                                              getSelfPid, send)
 
 import           Data.Binary                 (Binary)
 import           Data.Typeable               (Typeable)
 import           GHC.Generics                (Generic)
 
-import           Data.Foldable               (traverse_)
+import           Data.Foldable               (for_)
 
 newtype Ticket
   = Ticket Int
-  deriving (Show, Eq, Ord, Typeable, Generic)
+  deriving (Show, Eq, Ord, Num, Typeable, Generic)
 
 instance Binary Ticket
 
@@ -33,8 +34,9 @@ class (Binary c, Typeable c) => Message m c | m -> c where
   contentOf   :: m -> c
 
 sendMessages :: Message m c => [m] -> Process ()
-sendMessages =
-  traverse_ $ \m -> send (recipientOf m) (contentOf m)
+sendMessages ms = do
+  selfPid <- getSelfPid
+  for_ ms $ \m -> send (recipientOf m) (selfPid, contentOf m)
 
 data ClientRequest
   = NewTicket Ticket
@@ -45,9 +47,8 @@ data ClientRequest
 instance Binary ClientRequest
 
 data ServerResponse
-  = AllocatedTicket Ticket
-  | HaveTicket Ticket
-  | HaveProposal Proposal
+  = Round1OK Ticket (Maybe Proposal)
+  | HaveNewerTicket Ticket
   deriving (Show, Typeable, Generic)
 
 instance Binary ServerResponse
