@@ -36,7 +36,7 @@ main = do
     self       <- getSelfPid
 
     -- start servers
-    serverPids <- for [1..3] $ const $ spawnLocal server
+    serverPids <- for [1..4] $ const $ spawnLocal server
     for_ serverPids monitor
 
     -- start client

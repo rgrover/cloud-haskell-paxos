@@ -124,7 +124,7 @@ client serverPids = do
 
         haveRound1Majority :: Round1State -> Bool
         haveRound1Majority s =
-          (s ^. numOKs) >= round (fromIntegral (length serverPids) / 2)
+          (s ^. numOKs) > floor (fromIntegral (length serverPids) / 2)
 
         handleTick :: Tick -> ClientAction ()
         handleTick _ = do
