@@ -16,7 +16,8 @@ import           Control.Distributed.Process (Process, ProcessId,
 import           Data.Typeable               (Typeable)
 import           GHC.Generics                (Generic)
 
-import           Control.Lens                (makeLenses, use, (.=))
+import           Control.Lens                (makeLenses, use, (.=),
+                                              (<>=))
 import           Control.Monad               (when)
 import           Control.Monad.RWS.Lazy      (RWS, execRWS, tell)
 
@@ -62,8 +63,14 @@ server =
 
         handleClientRequest (requestor, Propose p@(ticket, command)) = do
           newestTicket <- use largestIssuedTicket
-          when (ticket == newestTicket) $
+          when (ticket == newestTicket) $ do
             proposal .= Just p
+            tell [ServerMessage requestor Round2Success]
+
+        handleClientRequest (requestor, Execute) = do
+            Just (_, command) <- use proposal
+            proposal .= Nothing
+            executed <>= [command]
 
         run handler msg =
           return $ execRWS (handler msg) () s
