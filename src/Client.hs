@@ -23,7 +23,7 @@ import           Data.Typeable               (Typeable, typeOf)
 import           GHC.Generics                (Generic)
 
 import           Control.Lens                (makeLenses, (&), (+~),
-                                              (.~), (^.), (^?))
+                                              (.~), (<>~), (^.), (^?))
 import           Control.Lens.TH             (makePrisms)
 import           Control.Monad               (forever, when)
 import           Control.Monad.RWS.Lazy      (RWS, execRWS, get, put,
@@ -38,14 +38,18 @@ makeLenses ''IdleState
 
 data Round1State
   = Round1State
-      { _ticketBeingAsked :: Ticket
-      , _numOKs           :: Int
+      { _round1Command      :: Command
+      , _ticketBeingAsked   :: Ticket
+      , _numOKs             :: Int
+      , _mostRecentProposal :: MostRecentProposal
       }
     deriving (Show)
 makeLenses ''Round1State
 
-data Round2State
+newtype Round2State
   = Round2State
+      { _round2Proposal :: Proposal
+      }
   deriving (Show)
 makeLenses ''Round2State
 
@@ -128,14 +132,29 @@ client serverPids = do
             when (round1S ^. ticketBeingAsked == ticketGranted) $ do
               let
                 round1S' =
-                  round1S & numOKs +~ 1
+                  round1S &
+                    (numOKs +~ 1) .
+                    (mostRecentProposal <>~ MostRecent mProposal)
               if haveRound1Majority round1S'
-                then put $ Round2 Round2State
+                then
+                  let
+                    ticket =
+                      round1S ^. ticketBeingAsked
+                    myCommand =
+                      round1S' ^. round1Command
+                    proposal =
+                      case round1S' ^. mostRecentProposal of
+                        MostRecent Nothing ->
+                          (ticket, myCommand)
+                        MostRecent (Just (_, previouslyChosenCommand)) ->
+                          (ticket, previouslyChosenCommand)
+                  in put $ Round2 $ Round2State proposal
                 else put $ Round1 round1S'
 
-        haveRound1Majority :: Round1State -> Bool
-        haveRound1Majority s =
-          (s ^. numOKs) > floor (fromIntegral (length serverPids) / 2)
+              where
+                haveRound1Majority :: Round1State -> Bool
+                haveRound1Majority s =
+                  (s ^. numOKs) > floor (fromIntegral (length serverPids) / 2)
 
         handleTick :: Tick -> ClientAction ()
         handleTick _ = do
@@ -146,5 +165,5 @@ client serverPids = do
                 idleS ^. furthestKnownTicket + 1
               numAcks =
                 0
-            put $ Round1 $ Round1State newTicket numAcks
+            put $ Round1 $ Round1State "command" newTicket numAcks mempty
             tell $ flip ClientMessage (AskForTicket newTicket) <$> serverPids

@@ -52,3 +52,16 @@ data ServerResponse
   deriving (Show, Typeable, Generic)
 
 instance Binary ServerResponse
+
+newtype MostRecentProposal
+  = MostRecent (Maybe Proposal)
+  deriving (Show)
+
+instance Semigroup MostRecentProposal where
+  (MostRecent Nothing) <> r = r
+  r <> (MostRecent Nothing) = r
+  r1@(MostRecent (Just (t1, _))) <> r2@(MostRecent (Just (t2, _))) =
+    if t1 >= t2 then r1 else r2
+
+instance Monoid MostRecentProposal where
+  mempty = MostRecent Nothing
