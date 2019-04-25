@@ -80,8 +80,8 @@ data Tick = Tick
 
 instance Binary Tick
 
-client :: [ProcessId] -> Process ()
-client serverPids = do
+client :: [ProcessId] -> Int -> Process ()
+client serverPids clientId = do
   getSelfPid >>= spawnLocal . ticker
   go initialClientState
   where
@@ -187,6 +187,6 @@ client serverPids = do
               numAcks =
                 0
               command =
-                "c" <> show t
+                "c" <> show clientId <> "." <> show t
             put $ Round1 $ Round1State command newTicket numAcks mempty
             sendToAllServers $ AskForTicket newTicket

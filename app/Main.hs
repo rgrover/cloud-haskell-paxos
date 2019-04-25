@@ -19,7 +19,7 @@ import           Control.Distributed.Process.Node
 import           Control.Monad                    (forever, void)
 import           Network.Transport.TCP            (createTransport, defaultTCPParameters)
 
-import           Data.Foldable                    (for_)
+import           Data.Foldable                    (for_, traverse_)
 import           Data.Traversable                 (for)
 
 main :: IO ()
@@ -39,9 +39,9 @@ main = do
     serverPids <- for [1..4] $ const $ spawnLocal server
     for_ serverPids monitor
 
-    -- start client
-    clientPid <- spawnLocal (client serverPids)
-    void $ monitor clientPid
+    -- start clients
+    clientPids <- traverse (spawnLocal . client serverPids) [1..2]
+    traverse_ monitor clientPids
 
     -- reap monitor notifications
     let
