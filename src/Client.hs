@@ -20,12 +20,14 @@ import           Control.Monad.IO.Class      (liftIO)
 
 import           Data.Binary                 (Binary)
 import           Data.Foldable               (for_)
+import           Data.Maybe                  (fromMaybe)
 import           Data.Typeable               (Typeable)
 import           GHC.Generics                (Generic)
 
 import           Control.Lens                (Lens', makeLenses, (&),
                                               (+~), (.~), (<>~), (^.),
                                               (^?))
+import           Control.Lens.Combinators    (_2)
 import           Control.Lens.TH             (makePrisms)
 import           Control.Monad               (forever, when)
 import           Control.Monad.RWS.Lazy      (RWS, execRWS, get, put,
@@ -53,6 +55,7 @@ data Round2State
       { _ticketOwned    :: Ticket
       , _round2Proposal :: Proposal
       , _round2OKs      :: Int
+      , _pendingCommand :: Maybe Command
       }
   deriving (Show)
 makeLenses ''Round2State
@@ -121,17 +124,24 @@ client serverPids clientId = do
           -> ClientAction ()
         handleServerResponse (sPid, HaveTicket newerT) = do
           s <- get
-          for_ (s ^? _Round1) $ \round1S ->
-            when (newerT >= round1S ^. ticketBeingAsked) $ do
+          let
+            newerT' = newerT + 1
+          case s of
+            Round1 round1S ->
               let
-                newerT' = newerT + 1
-                round1S' :: Round1State
                 round1S' =
                   round1S &
                     (ticketBeingAsked .~ newerT') .
                     (numOKs .~ 0)
-              put $ Round1 round1S'
-              sendToAllServers $ AskForTicket newerT'
+              in put $ Round1 round1S'
+            Round2 round2S ->
+              let
+                pendingC =
+                  round2S ^. pendingCommand
+                command =
+                  fromMaybe (round2S ^. round2Proposal . _2) pendingC
+              in put $ Round1 $ Round1State command newerT' 0 mempty
+          sendToAllServers $ AskForTicket newerT'
 
         handleServerResponse (sPid, Round1OK ticketGranted mProposal) = do
           s <- get
@@ -150,14 +160,14 @@ client serverPids clientId = do
                       round1S ^. ticketBeingAsked
                     myCommand =
                       round1S' ^. round1Command
-                    proposal =
+                    (proposal, pending) =
                       case round1S' ^. mostRecentProposal of
                         MostRecent Nothing ->
-                          (ticket, myCommand)
+                          ((ticket, myCommand), Nothing)
                         MostRecent (Just (_, previouslyChosenCommand)) ->
-                          (ticket, previouslyChosenCommand)
+                          ((ticket, previouslyChosenCommand), Just myCommand)
                     nOKs = 0
-                  put $ Round2 $ Round2State ticket proposal nOKs
+                  put $ Round2 $ Round2State ticket proposal nOKs pending
                   sendToAllServers $ Propose proposal
 
         handleServerResponse (sPid, Round2Success) = do
@@ -173,8 +183,18 @@ client serverPids clientId = do
                 let
                   t =
                     round2S ^. ticketOwned
-                sendToAllServers Execute t
-                put $ Idle $ IdleState t
+                sendToAllServers $ Execute t
+                case round2S ^. pendingCommand of
+                  Nothing ->
+                    put $ Idle $ IdleState t
+                  Just command -> do
+                    -- restart pending command
+                    let
+                      newTicket =
+                        t + 1
+                    put $ Round1 $
+                      Round1State command newTicket 0 mempty
+                    sendToAllServers $ AskForTicket newTicket
 
         haveMajority :: s -> Lens' s Int -> Bool
         haveMajority s l =

@@ -63,9 +63,12 @@ server =
 
         handleClientRequest (requestor, Propose p@(ticket, command)) = do
           newestTicket <- use largestIssuedTicket
-          when (ticket == newestTicket) $ do
-            proposal .= Just p
-            tell [ServerMessage requestor Round2Success]
+          if ticket == newestTicket
+            then do
+              proposal .= Just p
+              tell [ServerMessage requestor Round2Success]
+            else
+              tell [ ServerMessage requestor $ HaveTicket newestTicket ]
 
         handleClientRequest (requestor, Execute t) = do
           newestTicket <- use largestIssuedTicket
