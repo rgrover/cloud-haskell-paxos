@@ -113,6 +113,9 @@ client serverPids = do
           --say $ "handling msg type " ++ show (typeOf msg)
           return $ execRWS (handler msg) serverPids s
 
+        sendToAllServers :: ClientRequest -> ClientAction ()
+        sendToAllServers m = tell $ flip ClientMessage m <$> serverPids
+
         handleServerResponse
           :: (ProcessId, ServerResponse)
           -> ClientAction ()
@@ -128,7 +131,7 @@ client serverPids = do
                     (ticketBeingAsked .~ newerT') .
                     (numOKs .~ 0)
               put $ Round1 round1S'
-              tell $ flip ClientMessage (AskForTicket newerT') <$> serverPids
+              sendToAllServers $ AskForTicket newerT'
 
         handleServerResponse (sPid, Round1OK ticketGranted mProposal) = do
           s <- get
@@ -155,7 +158,7 @@ client serverPids = do
                           (ticket, previouslyChosenCommand)
                     nOKs = 0
                   put $ Round2 $ Round2State ticket proposal nOKs
-                  tell $ flip ClientMessage (Propose proposal) <$> serverPids
+                  sendToAllServers $ Propose proposal
 
         handleServerResponse (sPid, Round2Success) = do
           s <- get
@@ -167,7 +170,7 @@ client serverPids = do
               then
                 put $ Round2 round2S'
               else do
-                tell $ flip ClientMessage Execute <$> serverPids
+                sendToAllServers Execute
                 put $ Idle $ IdleState $ round2S ^. ticketOwned
 
         haveMajority :: s -> Lens' s Int -> Bool
@@ -186,4 +189,4 @@ client serverPids = do
               command =
                 "c" <> show t
             put $ Round1 $ Round1State command newTicket numAcks mempty
-            tell $ flip ClientMessage (AskForTicket newTicket) <$> serverPids
+            sendToAllServers $ AskForTicket newTicket
