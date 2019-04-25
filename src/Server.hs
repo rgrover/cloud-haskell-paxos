@@ -67,7 +67,9 @@ server =
             proposal .= Just p
             tell [ServerMessage requestor Round2Success]
 
-        handleClientRequest (requestor, Execute) = do
+        handleClientRequest (requestor, Execute t) = do
+          newestTicket <- use largestIssuedTicket
+          when (newestTicket == t) $ do
             Just (_, command) <- use proposal
             proposal .= Nothing
             executed <>= [command]

@@ -170,8 +170,11 @@ client serverPids clientId = do
               then
                 put $ Round2 round2S'
               else do
-                sendToAllServers Execute
-                put $ Idle $ IdleState $ round2S ^. ticketOwned
+                let
+                  t =
+                    round2S ^. ticketOwned
+                sendToAllServers Execute t
+                put $ Idle $ IdleState t
 
         haveMajority :: s -> Lens' s Int -> Bool
         haveMajority s l =

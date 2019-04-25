@@ -41,7 +41,7 @@ sendMessages ms = do
 data ClientRequest
   = AskForTicket Ticket
   | Propose Proposal
-  | Execute
+  | Execute Ticket
   deriving (Show, Typeable, Generic)
 
 instance Binary ClientRequest
