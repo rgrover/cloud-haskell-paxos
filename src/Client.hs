@@ -135,8 +135,9 @@ client serverPids = do
                   round1S &
                     (numOKs +~ 1) .
                     (mostRecentProposal <>~ MostRecent mProposal)
-              if haveRound1Majority round1S'
-                then
+              if not $ haveRound1Majority round1S'
+                then put $ Round1 round1S'
+                else do
                   let
                     ticket =
                       round1S ^. ticketBeingAsked
@@ -148,9 +149,8 @@ client serverPids = do
                           (ticket, myCommand)
                         MostRecent (Just (_, previouslyChosenCommand)) ->
                           (ticket, previouslyChosenCommand)
-                  in put $ Round2 $ Round2State proposal
-                else put $ Round1 round1S'
-
+                  put $ Round2 $ Round2State proposal
+                  tell $ flip ClientMessage (Propose proposal) <$> serverPids
               where
                 haveRound1Majority :: Round1State -> Bool
                 haveRound1Majority s =

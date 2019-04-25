@@ -17,6 +17,7 @@ import           Data.Typeable               (Typeable)
 import           GHC.Generics                (Generic)
 
 import           Control.Lens                (makeLenses, use, (.=))
+import           Control.Monad               (when)
 import           Control.Monad.RWS.Lazy      (RWS, execRWS, tell)
 
 data ServerState
@@ -56,7 +57,13 @@ server =
               tell [ ServerMessage requestor $ HaveTicket newestTicket ]
             else do
               largestIssuedTicket .= reqTicket
-              tell [ServerMessage requestor $ Round1OK reqTicket Nothing]
+              mP <- use proposal
+              tell [ServerMessage requestor $ Round1OK reqTicket mP]
+
+        handleClientRequest (requestor, Propose p@(ticket, command)) = do
+          newestTicket <- use largestIssuedTicket
+          when (ticket == newestTicket) $
+            proposal .= Just p
 
         run handler msg =
           return $ execRWS (handler msg) () s
