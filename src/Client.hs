@@ -19,53 +19,52 @@ import           Control.Distributed.Process (Process, ProcessId,
 import           Control.Monad.IO.Class      (liftIO)
 
 import           Data.Binary                 (Binary)
-import           Data.Foldable               (for_)
-import           Data.Maybe                  (fromMaybe)
+import           Data.Maybe                  (fromJust)
 import           Data.Typeable               (Typeable)
 import           GHC.Generics                (Generic)
 
-import           Control.Lens                (Lens', makeLenses, (&),
-                                              (+~), (.~), (<>~), (^.),
-                                              (^?))
-import           Control.Lens.Combinators    (_2)
+import           Control.Lens                (makeLenses, (+=), (.=),
+                                              (<+=), (<>~), (^.),
+                                              (^?), (^?!))
+import           Control.Lens.Combinators    (review, use)
+import           Control.Lens.Extras         (is)
+import           Control.Lens.Prism          (isn't)
 import           Control.Lens.TH             (makePrisms)
 import           Control.Monad               (forever, when)
-import           Control.Monad.RWS.Lazy      (RWS, execRWS, get, put,
-                                              tell)
+import           Control.Monad.RWS.Lazy      (RWS, execRWS, get, tell)
 
-newtype IdleState
-  = IdleState
-      { _furthestKnownTicket :: Ticket
-      }
-    deriving (Show)
-makeLenses ''IdleState
-
-data Round1State
+newtype Round1State
   = Round1State
-      { _round1Command      :: Command
-      , _ticketBeingAsked   :: Ticket
-      , _numOKs             :: Int
-      , _mostRecentProposal :: MostRecentProposal
+      { _mostRecentProposal :: MostRecentProposal
       }
-    deriving (Show)
+  deriving (Show)
 makeLenses ''Round1State
 
 data Round2State
   = Round2State
-      { _ticketOwned    :: Ticket
-      , _round2Proposal :: Proposal
-      , _round2OKs      :: Int
-      , _pendingCommand :: Maybe Command
+      { _proposal               :: Proposal
+      , _originalCommandPending :: Bool
       }
   deriving (Show)
 makeLenses ''Round2State
 
-data ClientState
-  = Idle IdleState
+data RoundState
+  = Idle
   | Round1 Round1State
   | Round2 Round2State
   deriving (Show)
-makePrisms ''ClientState
+makePrisms ''RoundState
+
+data ClientState
+  = ClientState
+      { _ticket     :: Ticket
+      , _mCommand   :: Maybe Command
+      , _numAcks    :: Int
+      , _roundState :: RoundState
+      }
+  deriving (Show)
+
+makeLenses ''ClientState
 
 data ClientMessage
   = ClientMessage ProcessId ClientRequest
@@ -89,7 +88,11 @@ client serverPids clientId = do
   go initialClientState
   where
     initialClientState =
-      Idle $ IdleState { _furthestKnownTicket = Ticket 0 }
+      ClientState
+        (Ticket 0)
+        Nothing    -- mCommand
+        0          -- numAcks
+        Idle       -- roundState
     ticker :: ProcessId -> Process ()
     ticker invokerPid =
       forever $ do
@@ -122,94 +125,83 @@ client serverPids clientId = do
         handleServerResponse
           :: (ProcessId, ServerResponse)
           -> ClientAction ()
-        handleServerResponse (sPid, HaveTicket newerT) = do
+        handleServerResponse (sPid, HaveTicket serverTicket) = do
           s <- get
-          let
-            newerT' = newerT + 1
-          case s of
-            Round1 round1S ->
+          when (isn't _Idle (s ^. roundState)) $ do
+            ownTicket <- use ticket
+            when (serverTicket >= ownTicket) $ do
               let
-                round1S' =
-                  round1S &
-                    (ticketBeingAsked .~ newerT') .
-                    (numOKs .~ 0)
-              in put $ Round1 round1S'
-            Round2 round2S ->
-              let
-                pendingC =
-                  round2S ^. pendingCommand
-                command =
-                  fromMaybe (round2S ^. round2Proposal . _2) pendingC
-              in put $ Round1 $ Round1State command newerT' 0 mempty
-          sendToAllServers $ AskForTicket newerT'
+                nextTicket =
+                  serverTicket + 1
+              ticket     .= nextTicket
+              numAcks    .= 0
+              roundState .= Round1 (Round1State mempty)
+
+              sendToAllServers $ AskForTicket nextTicket
 
         handleServerResponse (sPid, Round1OK ticketGranted mProposal) = do
           s <- get
-          for_ (s ^? _Round1) $ \round1S ->
-            when (round1S ^. ticketBeingAsked == ticketGranted) $ do
-              let
-                round1S' =
-                  round1S &
-                    (numOKs +~ 1) .
-                    (mostRecentProposal <>~ MostRecent mProposal)
-              if not $ haveMajority round1S' numOKs
-                then put $ Round1 round1S'
-                else do
-                  let
-                    ticket =
-                      round1S ^. ticketBeingAsked
-                    myCommand =
-                      round1S' ^. round1Command
-                    (proposal, pending) =
-                      case round1S' ^. mostRecentProposal of
-                        MostRecent Nothing ->
-                          ((ticket, myCommand), Nothing)
-                        MostRecent (Just (_, previouslyChosenCommand)) ->
-                          ((ticket, previouslyChosenCommand), Just myCommand)
-                    nOKs = 0
-                  put $ Round2 $ Round2State ticket proposal nOKs pending
-                  sendToAllServers $ Propose proposal
+          when (is _Round1 (s ^. roundState) &&
+                ((s ^. ticket) == ticketGranted)) $ do
+            numAcks += 1
+            let
+              round1S =
+                fromJust $
+                  (mostRecentProposal <>~ MostRecent mProposal) <$>
+                    (s ^? (roundState . _Round1))
+            reachedMajority <- haveMajority
+            if not reachedMajority
+              then roundState .= review _Round1 round1S
+              else do
+                Just myCommand <- use mCommand
+                let
+                  round2S =
+                    case round1S ^. mostRecentProposal of
+                      MostRecent Nothing ->
+                        Round2State
+                          (ticketGranted, myCommand) -- proposal
+                          False -- own command pending
+                      MostRecent (Just (_, previouslyChosenCommand)) ->
+                        Round2State
+                          (ticketGranted, previouslyChosenCommand)
+                          True  -- own command pending
+                numAcks .= 0
+                roundState .= Round2 round2S
+                sendToAllServers $ Propose (round2S ^. proposal)
 
         handleServerResponse (sPid, Round2Success) = do
           s <- get
-          for_ (s ^? _Round2) $ \round2S -> do
-            let
-              round2S' =
-                round2S & round2OKs +~ 1
-            if not (haveMajority round2S' round2OKs)
-              then
-                put $ Round2 round2S'
-              else do
-                let
-                  t =
-                    round2S ^. ticketOwned
-                sendToAllServers $ Execute t
-                case round2S ^. pendingCommand of
-                  Nothing ->
-                    put $ Idle $ IdleState t
-                  Just command -> do
-                    -- restart pending command
-                    let
-                      newTicket =
-                        t + 1
-                    put $ Round1 $
-                      Round1State command newTicket 0 mempty
-                    sendToAllServers $ AskForTicket newTicket
+          when (is _Round2 (s ^. roundState)) $ do
+            numAcks += 1
+            reachedMajority <- haveMajority
+            when reachedMajority $ do
+              sendToAllServers $ Execute (s ^. ticket)
+              if s ^?! roundState . _Round2 . originalCommandPending
+                then do
+                  -- restart pending command
+                  newTicket <- ticket <+= 1
+                  numAcks .= 0
+                  roundState .= (Round1 $ Round1State mempty)
+                  sendToAllServers $ AskForTicket newTicket
+                else do
+                  mCommand   .= Nothing
+                  numAcks    .= 0
+                  roundState .= Idle
 
-        haveMajority :: s -> Lens' s Int -> Bool
-        haveMajority s l =
-          (s ^. l) > floor (fromIntegral (length serverPids) / 2)
+        haveMajority :: ClientAction Bool
+        haveMajority =
+          (> floor (fromIntegral (length serverPids) / 2)) <$>
+            use numAcks
 
         handleTick :: Tick -> ClientAction ()
         handleTick _ = do
           s <- get
-          for_ (s ^? _Idle) $ \idleS -> do
+          when (is _Idle (s ^. roundState)) $ do
+            Ticket t <- ticket <+= 1
             let
-              newTicket@(Ticket t) =
-                idleS ^. furthestKnownTicket + 1
-              numAcks =
-                0
               command =
                 "c" <> show clientId <> "." <> show t
-            put $ Round1 $ Round1State command newTicket numAcks mempty
-            sendToAllServers $ AskForTicket newTicket
+            mCommand   .= Just command
+            numAcks    .= 0
+            roundState .= (Round1 $ Round1State mempty)
+            sendToAllServers $ AskForTicket $ Ticket t

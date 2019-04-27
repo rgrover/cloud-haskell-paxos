@@ -19,6 +19,8 @@ import           Control.Distributed.Process.Node
 import           Control.Monad                    (forever, void)
 import           Network.Transport.TCP            (createTransport, defaultTCPParameters)
 
+import           Control.Concurrent               (threadDelay)
+import           Control.Monad.IO.Class           (liftIO)
 import           Data.Foldable                    (for_, traverse_)
 import           Data.Traversable                 (for)
 
@@ -36,7 +38,7 @@ main = do
     self       <- getSelfPid
 
     -- start servers
-    serverPids <- for [1..4] $ const $ spawnLocal server
+    serverPids <- for [1..2] $ const $ spawnLocal server
     for_ serverPids monitor
 
     -- start clients
